@@ -264,7 +264,28 @@ widget.clickFunc = function() {
 4. 차트는 <BIX5> 태그로 감싸기
 5. HTML 위젯은 <style>, <div>, <script> 순서로
 
-사용자 요청에 맞는 BIX5 코드를 생성하세요.`
+## 출력 구조 (반드시 3가지 섹션 포함)
+
+### 1. 레이아웃 (XML 차트 또는 HTML+CSS)
+<BIX5>...</BIX5> 또는 <style>...</style><div>...</div>
+
+### 2. 스크립트
+<script>
+widget.componentReadyHandler = function(componentId) { ... };
+widget.setTransformSourceHandler(function(topic, payload) { return payload; });
+widget.componentRemoveHandler = function() { ... };
+</script>
+
+### 3. 컴포넌트 옵션 (JSON)
+{
+  "customStyle": true,
+  "propertyOptions": [...],
+  "layoutMetaData": {...},
+  "bindingSource": "데이터셋ID",
+  "isAutoServiceStart": true
+}
+
+사용자 요청에 맞는 BIX5 코드를 생성하세요. 반드시 레이아웃, 스크립트, 컴포넌트옵션 3가지를 모두 포함하세요.`
 
 const WIDGET_TYPES: Record<string, string> = {
   'line-chart': '라인 차트 (Line2DChart)',
