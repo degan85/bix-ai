@@ -123,16 +123,17 @@ export default function Home() {
   const [selectedAnimation, setSelectedAnimation] = useState('none')
   const [selectedTheme, setSelectedTheme] = useState('kb')
 
-  // 코드 섹션 분리
+  // 코드 섹션 분리 (# 레이아웃, # 스크립트, # 컴포넌트 옵션)
   const parseCodeSections = (code: string) => {
-    const layoutMatch = code.match(/<BIX5[\s\S]*?<\/BIX5>|<style[\s\S]*?<\/style>[\s\S]*?<div[\s\S]*?<\/div>/i)
-    const scriptMatch = code.match(/<script[\s\S]*?<\/script>/gi)
-    const optionsMatch = code.match(/\{[\s\S]*"propertyOptions"[\s\S]*\}/i)
+    // 섹션 헤더로 분리
+    const layoutMatch = code.match(/# 레이아웃\s*([\s\S]*?)(?=# 스크립트|$)/i)
+    const scriptMatch = code.match(/# 스크립트\s*([\s\S]*?)(?=# 컴포넌트 옵션|$)/i)
+    const optionsMatch = code.match(/# 컴포넌트 옵션\s*([\s\S]*?)$/i)
     
     return {
-      layout: layoutMatch ? layoutMatch[0] : '',
-      script: scriptMatch ? scriptMatch.join('\n\n') : '',
-      options: optionsMatch ? optionsMatch[0] : '',
+      layout: layoutMatch ? layoutMatch[1].trim() : '',
+      script: scriptMatch ? scriptMatch[1].trim() : '',
+      options: optionsMatch ? optionsMatch[1].trim() : '',
       all: code
     }
   }

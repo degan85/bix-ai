@@ -1,301 +1,324 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { promises as fs } from 'fs'
-import path from 'path'
 
-// 레퍼런스 코드 로드 (빌드 시 포함)
-async function loadReferenceCode(): Promise<string> {
-  try {
-    const refDir = path.join(process.cwd(), 'src/ref')
-    const files = ['code1.md', 'code2.md', 'code3.md', 'code4.md']
-    let content = ''
-    
-    for (const file of files) {
-      try {
-        const filePath = path.join(refDir, file)
-        const fileContent = await fs.readFile(filePath, 'utf-8')
-        content += `\n\n### ${file}\n${fileContent.slice(0, 3000)}...`
-      } catch {
-        // 파일 없으면 스킵
-      }
-    }
-    return content
-  } catch {
-    return ''
-  }
-}
+const SYSTEM_PROMPT = `당신은 BIX5 대시보드 전문가입니다. 사용자 요청에 맞는 BIX5 코드를 생성합니다.
 
-const SYSTEM_PROMPT = `당신은 BIX5 대시보드 솔루션 전문가입니다. 사용자의 요청에 따라 BIX5 위젯 코드를 생성합니다.
+## 중요: 출력 형식
+반드시 아래 3가지 섹션을 순서대로 출력하세요:
 
-## BIX5 핵심 구조
+# 레이아웃
+(BIX5 XML 또는 HTML+CSS)
 
-### 1. 기본 XML 구조 (차트용)
+# 스크립트
+<script>
+(JavaScript 코드)
+</script>
+
+# 컴포넌트 옵션
+(JSON 객체)
+
+---
+
+## 1. 레이아웃 패턴
+
+### 차트 (BIX5 XML)
 \`\`\`xml
 <BIX5 backgroundColor="transparent" fontSize="11" fontFamily="KBFGTextM">
   <Options>
+    <Caption text="" height="1"/>
     <Legend position="bottom" display="block"/>
   </Options>
-  <UnitFormatter id="unitfmt" useThousandsSeparator="true" divisor="1000"/>
-  <!-- 차트 컴포넌트 -->
+  <UnitFormatter id="unitfmt" useThousandsSeparator="true" divisor="1"/>
+  <Line2DChart showDataTips="true" dataTipDisplayMode="axis">
+    <horizontalAxis>
+      <CategoryAxis id="hAxis" categoryField="영업일"/>
+    </horizontalAxis>
+    <verticalAxis>
+      <LinearAxis id="vAxis" formatter="{unitfmt}"/>
+    </verticalAxis>
+    <series>
+      <Line2DSeries yField="당월CMIP" displayName="당월" itemRenderer="CircleItemRenderer" radius="4">
+        <fills><SolidColor color="#f38530"/></fills>
+        <lineStroke><Stroke color="#f38530" weight="3"/></lineStroke>
+      </Line2DSeries>
+    </series>
+  </Line2DChart>
 </BIX5>
 \`\`\`
 
-### 2. HTML 위젯 구조 (커스텀 UI용)
-모든 CSS는 #{{id}}로 스코핑 필수!
+### DataGrid
+\`\`\`xml
+<BIX5>
+  <DataGrid headerColors="[#dfdfdf,#dfdfdf]" color="#545045" 
+    alternatingItemColors="[#ffffff,#f0f0f0]" fontSize="11" 
+    headerHeight="28" rowHeight="24" selectionMode="none">
+    <columns>
+      <DataGridColumn dataField="순위" headerText="순위" textAlign="center" width="36"
+        itemRenderer="HtmlItem" labelJsFunction="@widget.labelJsFunctionRank"/>
+      <DataGridColumn dataField="CMIP" headerText="CMIP" textAlign="right"
+        itemRenderer="HtmlItem" labelJsFunction="@widget.labelJsFunctionNum"/>
+    </columns>
+  </DataGrid>
+</BIX5>
+\`\`\`
+
+### HTML 위젯 (style + div)
+CSS는 반드시 #{{id}}로 스코핑!
 \`\`\`html
 <style>
-  #{{id}} .card { ... }
+  #{{id}} .card { 
+    background: linear-gradient({{@root.meta.gradientDeg}}deg, {{@root.meta.gradientColorF}}, {{@root.meta.gradientColorS}});
+    padding: {{@root.meta.padding}}px;
+  }
+  #{{id}} .title { font-family: KBFGDisplayM; font-size: 18px; color: #3c301d; }
+  #{{id}} .val { font-family: KBFGDisplayB; font-size: 28px; }
+  #{{id}} .distance.up svg { fill: #ef4d4d; }
+  #{{id}} .distance.down svg { fill: #0065ff; transform: rotate(180deg); }
 </style>
+
 <div class="card">
-  {{NumberFormatter data.[0].값 precision=0 thousandsSeparator=","}}
+  {{#each meta.columns}}
+  <div class="group">
+    <div class="title">{{this.label}}</div>
+    <div class="val">{{NumberFormatter (lookup @root.data.[0] this.alias) precision=0 thousandsSeparator=","}}</div>
+  </div>
+  {{/each}}
 </div>
+\`\`\`
+
+### Handlebars 문법
+- 단일 값: {{data.[0].컬럼명}}
+- 숫자 포맷: {{NumberFormatter data.[0].값 precision=0 thousandsSeparator="," nanSign="-"}}
+- 조건문: {{#ifCond data.[0].증감 '>' 0}}up{{else}}down{{/ifCond}}
+- 반복문: {{#each meta.columns}}...{{/each}}
+- lookup: {{lookup @root.meta.fills @index}}
+- 메타참조: {{@root.meta.gradientDeg}}
+
+---
+
+## 2. 스크립트 패턴
+
+### 기본 구조
+\`\`\`javascript
 <script>
-widget.componentReadyHandler = function(componentId) { };
+  /**
+   * component를 사용할 준비가 되면 호출합니다.
+   */
+  widget.componentReadyHandler = function(componentId){
+    // 메타데이터 초기화
+    widget.setLayoutMetaData({columns:[]});
+    
+    // 이벤트 리스너 등록
+    widget.getSlide().addEventListener("tabBtnClick", widget.tabBtnClickHandler);
+  };
+
+  /**
+   * 이벤트 핸들러
+   */
+  widget.tabBtnClickHandler = function(e){
+    if(!e.detail?.value) return;
+    var value = e.detail.value;
+    
+    // 메타데이터 업데이트
+    widget.setLayoutMetaData({columns: value});
+    
+    // 데이터 재조회
+    widget.getBindingSourceObject().setParam({필터: value});
+    widget.getBindingSourceObject().serviceStart();
+  };
+
+  /**
+   * 집계 완료 후 호출 (순위 계산 등)
+   */
+  widget.setAggregateCompleteHandler(function(payload){
+    var newData = JSON.parse(JSON.stringify(payload));
+    newData.forEach((item, index) => {
+      item.순위 = index + 1;
+    });
+    return newData;
+  });
+
+  /**
+   * 데이터 변형 (천원 단위 변환 등)
+   */
+  widget.setTransformSourceHandler(function(topic, payload){
+    if (!payload || !Array.isArray(payload)) return payload;
+    
+    payload.forEach(row => {
+      if (row.__scaled) return;
+      for (var k in row) {
+        if (typeof row[k] === 'number') {
+          row[k] = row[k] / 1000; // 천원 단위
+        }
+      }
+      row.__scaled = true;
+    });
+    return payload;
+  });
+
+  /**
+   * DataGrid용 labelJsFunction
+   */
+  widget.labelJsFunctionNum = function(item, value, column){
+    if (typeof value === 'number') {
+      return Math.floor(value).toLocaleString('ko-KR');
+    }
+    return value;
+  };
+
+  widget.labelJsFunctionRank = function(item, value, column){
+    if(item.순위 == 1) return '<img src="/images/금메달ID">';
+    if(item.순위 == 2) return '<img src="/images/은메달ID">';
+    if(item.순위 == 3) return '<img src="/images/동메달ID">';
+    return value;
+  };
+
+  /**
+   * component가 삭제되기 전 호출됩니다.
+   */
+  widget.componentRemoveHandler = function(){
+    widget.getSlide().removeEventListener("tabBtnClick", widget.tabBtnClickHandler);
+  };
 </script>
 \`\`\`
 
-## 차트 타입별 코드
-
-### Line2DChart (라인 차트)
-\`\`\`xml
-<Line2DChart showDataTips="true" dataTipDisplayMode="axis">
-  <horizontalAxis>
-    <CategoryAxis id="hAxis" categoryField="날짜"/>
-  </horizontalAxis>
-  <verticalAxis>
-    <LinearAxis id="vAxis" formatter="{unitfmt}"/>
-  </verticalAxis>
-  <series>
-    <Line2DSeries yField="값" displayName="라벨" itemRenderer="CircleItemRenderer" radius="4">
-      <fills><SolidColor color="#f38530"/></fills>
-      <lineStroke><Stroke color="#f38530" weight="3"/></lineStroke>
-    </Line2DSeries>
-  </series>
-  <backgroundElements>
-    <GridLines direction="horizontal">
-      <horizontalStroke><Stroke color="#ddd5cc" weight="1"/></horizontalStroke>
-    </GridLines>
-  </backgroundElements>
-</Line2DChart>
-\`\`\`
-
-### Bar2DChart (바 차트)
-\`\`\`xml
-<Bar2DChart showDataTips="true" barWidthRatio="0.7">
-  <horizontalAxis>
-    <LinearAxis id="hAxis" formatter="{unitfmt}"/>
-  </horizontalAxis>
-  <verticalAxis>
-    <CategoryAxis id="vAxis" categoryField="분류"/>
-  </verticalAxis>
-  <series>
-    <Bar2DSet type="clustered">
-      <series>
-        <Bar2DSeries xField="값" displayName="라벨" itemRenderer="SemiCircleBarItemRenderer" labelPosition="outside">
-          <fills>
-            <LinearGradient angle="0">
-              <entries>
-                <GradientEntry ratio="1" color="#ffa133"/>
-                <GradientEntry ratio="0" color="#ffc820" alpha="0.5"/>
-              </entries>
-            </LinearGradient>
-          </fills>
-        </Bar2DSeries>
-      </series>
-    </Bar2DSet>
-  </series>
-</Bar2DChart>
-\`\`\`
-
-### DataGrid (데이터 그리드)
-\`\`\`xml
-<DataGrid headerColors="[#dfdfdf,#dfdfdf]" color="#545045" 
-  alternatingItemColors="[#ffffff,#f0f0f0]" fontSize="11" 
-  selectionMode="none" headerHeight="28" rowHeight="24"
-  horizontalGridLineColor="rgba(221,221,221,1)">
-  <columns>
-    <DataGridColumn dataField="컬럼명" headerText="헤더" textAlign="center" width="100"/>
-    <DataGridColumn dataField="숫자" headerText="값" textAlign="right" 
-      itemRenderer="HtmlItem" labelJsFunction="@widget.labelJsFunc"/>
-  </columns>
-</DataGrid>
-\`\`\`
-
-## Handlebars 문법
-
-### 데이터 바인딩
-- 단일 값: \`{{data.[0].컬럼명}}\`
-- 숫자 포맷: \`{{NumberFormatter data.[0].값 precision=0 thousandsSeparator="," nanSign="-"}}\`
-- 반복문: \`{{#each data}}{{this.컬럼명}}{{/each}}\`
-- 조건부: \`{{#ifCond value '>' 0}}증가{{else}}감소{{/ifCond}}\`
-- 메타 컬럼: \`{{#each meta.columns}}{{this.label}}{{/each}}\`
-- lookup: \`{{lookup @root.meta.colors @index}}\`
-
-### 증감 표시 패턴
-\`\`\`html
-<div class="distance{{#ifCond data.[0].증감 '>' 0}} up{{/ifCond}}{{#ifCond data.[0].증감 '<' 0}} down{{/ifCond}}">
-  <svg viewBox="0 0 16 16"><path d="M7.022 1.566..."/></svg>
-  {{NumberFormatter data.[0].증감 nanSign="-" useNegativeSign="false"}}
-</div>
-\`\`\`
-
-## 애니메이션 패턴
-
-### 두근두근 (bounce)
-\`\`\`css
-#{{id}} { animation: bounce{{id}} 3s infinite; }
-@keyframes bounce{{id}} {
-  0% { box-shadow:8px 8px 15px rgba(0,0,0,0.5); transform:scale(1); }
-  50% { box-shadow:0px 2px 2px rgba(0,0,0,0.2); transform:scale(0.99); }
-  100% { box-shadow:8px 8px 15px rgba(0,0,0,0.5); transform:scale(1); }
-}
-\`\`\`
-
-### 그라데이션 애니메이션
-\`\`\`css
-#{{id}} {
-  background-image: linear-gradient(130deg, #ffe476, #ffa800, #ffe476);
-  background-size: 1100% 1100%;
-  animation: animateBg{{id}} 10s linear infinite;
-}
-@keyframes animateBg{{id}} {
-  0% { background-position: 100% 100%; }
-  100% { background-position: 0% 0%; }
-}
-\`\`\`
-
-### 반짝임 (blink)
-\`\`\`css
-#{{id}} .val { animation: blink{{id}} 2.5s infinite; }
-@keyframes blink{{id}} {
-  0%, 22%, 36%, 75% { color: #fff; text-shadow: 0 0 0.6rem #ff5200; }
-  28%, 33%, 82%, 97% { color: #333; text-shadow: none; }
-}
-\`\`\`
-
-### 테두리 빛 애니메이션
-\`\`\`css
-#{{id}} .lightBorderspan span:nth-child(1) {
-  top: 0; left: -100%; width: 100%; height: 2px;
-  background: linear-gradient(90deg, transparent, #ff7400);
-  animation: btn-anim1{{id}} 1s linear infinite;
-}
-@keyframes btn-anim1{{id}} { 0% { left: -100%; } 50%,100% { left: 100%; } }
-\`\`\`
-
-## 스크립트 패턴
-
-### 기본 핸들러
+### 이벤트 발생 (다른 위젯에 전달)
 \`\`\`javascript
-widget.componentReadyHandler = function(componentId) {
-  // 초기화
+widget.clickEvent = function(index, element){
+  var event = BIX5.dashboard.createEvent('이벤트명', false, false, {value: $(element).text()});
+  widget.getSlide().dispatchEvent(event);
 };
+\`\`\`
 
-widget.setTransformSourceHandler(function(topic, payload) {
-  // 데이터 변환 (예: 천원 단위)
-  if (Array.isArray(payload)) {
-    payload.forEach(row => {
-      for (var k in row) {
-        if (typeof row[k] === 'number') row[k] = row[k] / 1000;
-      }
-    });
+---
+
+## 3. 컴포넌트 옵션 패턴
+
+### 기본 옵션 (필수)
+\`\`\`json
+{
+  "customStyle": true,
+  "propertyOptions": [],
+  "layoutMetaData": {},
+  "isMultiView": false,
+  "marginLeft": 0,
+  "marginTop": 0,
+  "marginRight": 0,
+  "marginBottom": 0,
+  "isAutoServiceStart": true,
+  "dedicated": false,
+  "isDataLimit": true,
+  "dataLimit": 10,
+  "overflow": "hidden",
+  "bindingSource": "",
+  "referenceSources": [],
+  "interactiveFiltering": false,
+  "dynamicFiltering": true,
+  "filterField": ""
+}
+\`\`\`
+
+### propertyOptions 예제 (GUI 설정)
+\`\`\`json
+{
+  "propertyOptions": [
+    {
+      "label": "제목",
+      "control": "TextInput",
+      "attribute": "titleText"
+    },
+    {
+      "label": "폰트 설정",
+      "control": "FontController",
+      "attribute": "titleFont",
+      "tools": ["fontFamily", "fontSize", "color", "fontWeight"]
+    },
+    {
+      "label": "배경 색상",
+      "control": "ColorSelector",
+      "attribute": "bgColor",
+      "useOpacity": true
+    },
+    {
+      "label": "패딩",
+      "control": "NumericStepper",
+      "minimum": 0,
+      "maximum": 100,
+      "stepSize": 1,
+      "attribute": "padding"
+    },
+    {
+      "label": "이미지",
+      "control": "ResourceSelector",
+      "type": "image",
+      "attribute": "iconSrc"
+    },
+    {
+      "label": "애니메이션",
+      "control": "SlideButton",
+      "attribute": "useAnimation",
+      "children": [
+        {
+          "label": "속도(초)",
+          "control": "NumericStepper",
+          "minimum": 0,
+          "maximum": 10,
+          "stepSize": 0.1,
+          "attribute": "animationTime"
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+### layoutMetaData 예제
+\`\`\`json
+{
+  "layoutMetaData": {
+    "columns": [
+      {"label": "총CMIP", "alias": "총CMIP"},
+      {"label": "증감", "alias": "증감"}
+    ],
+    "titleFont": {
+      "fontFamily": "KBFGDisplayM",
+      "fontSize": 18,
+      "color": "#333333",
+      "fontWeight": "normal"
+    },
+    "gradientDeg": 130,
+    "gradientColorF": "rgba(255,228,118,1)",
+    "gradientColorS": "rgba(255,168,0,1)",
+    "padding": 15
   }
-  return payload;
-});
-
-widget.componentRemoveHandler = function() { };
+}
 \`\`\`
 
-### 순위 표시 함수
-\`\`\`javascript
-widget.labelJsFunctionRank = function(item, value, column) {
-  if (item.순위 == 1) return '<img src="/images/gold.png">';
-  if (item.순위 == 2) return '<img src="/images/silver.png">';
-  if (item.순위 == 3) return '<img src="/images/bronze.png">';
-  return value;
-};
+### referenceSources (이미지 리소스)
+\`\`\`json
+{
+  "referenceSources": [
+    {"type": "image", "id": "이미지ID", "label": "1위아이콘"},
+    {"type": "image", "id": "이미지ID", "label": "배경이미지"}
+  ]
+}
 \`\`\`
 
-### 숫자 포맷 함수
-\`\`\`javascript
-widget.labelJsFunctionNum = function(item, value, column) {
-  if (typeof value === 'number') {
-    return Math.floor(value).toLocaleString('ko-KR');
-  }
-  return value;
-};
-\`\`\`
+---
 
-### 이벤트 리스너
-\`\`\`javascript
-widget.getSlide().addEventListener("tabBtnClick", widget.tabBtnClickHandler);
-
-widget.tabBtnClickHandler = function(e) {
-  if (!e.detail?.value) return;
-  widget.getBindingSourceObject().setParam({필터: e.detail.value});
-  widget.getBindingSourceObject().serviceStart();
-};
-\`\`\`
-
-### 모달 다이얼로그
-\`\`\`javascript
-widget.clickFunc = function() {
-  var dialogEle = widget.querySelector('#' + widget.id + '-modal');
-  widget.modal = $(dialogEle).dialog({
-    title: '상세보기',
-    autoOpen: false, width: 800, height: 600, modal: true
-  });
-  widget.modal.dialog("open");
-};
-\`\`\`
-
-## 색상 팔레트 (KB 스타일)
-- Primary: #ffbc00 (KB 옐로우)
+## 색상 (KB 스타일)
+- Primary: #ffbc00 (옐로우)
 - Secondary: #f38530 (오렌지)
-- Accent: #c1550b (다크 오렌지)
 - Text: #545045, #333333
-- Border: #ddd5cc
 - Up: #ef4d4d (빨강)
 - Down: #0065ff (파랑)
 
-## 출력 규칙
-1. 코드만 출력 (설명 없이)
-2. 마크다운 코드블록 사용하지 않음
-3. CSS는 반드시 #{{id}}로 스코핑
-4. 차트는 <BIX5> 태그로 감싸기
-5. HTML 위젯은 <style>, <div>, <script> 순서로
-
-## 출력 구조 (반드시 3가지 섹션 포함)
-
-### 1. 레이아웃 (XML 차트 또는 HTML+CSS)
-<BIX5>...</BIX5> 또는 <style>...</style><div>...</div>
-
-### 2. 스크립트
-<script>
-widget.componentReadyHandler = function(componentId) { ... };
-widget.setTransformSourceHandler(function(topic, payload) { return payload; });
-widget.componentRemoveHandler = function() { ... };
-</script>
-
-### 3. 컴포넌트 옵션 (JSON)
-{
-  "customStyle": true,
-  "propertyOptions": [...],
-  "layoutMetaData": {...},
-  "bindingSource": "데이터셋ID",
-  "isAutoServiceStart": true
-}
-
-사용자 요청에 맞는 BIX5 코드를 생성하세요. 반드시 레이아웃, 스크립트, 컴포넌트옵션 3가지를 모두 포함하세요.`
-
-const WIDGET_TYPES: Record<string, string> = {
-  'line-chart': '라인 차트 (Line2DChart)',
-  'bar-chart': '바 차트 (Bar2DChart)',
-  'data-grid': '데이터 그리드 (DataGrid)',
-  'kpi-card': 'KPI 카드 (HTML 위젯)',
-  'button': '버튼 위젯',
-  'card-grid': '카드 그리드',
-  'custom': '사용자 정의 위젯',
-}
+## 규칙
+1. 마크다운 코드블록(\`\`\`) 사용하지 않음
+2. 설명 없이 코드만 출력
+3. 레이아웃, 스크립트, 컴포넌트 옵션 3가지 필수 포함
+4. CSS는 반드시 #{{id}}로 스코핑
+5. 데이터 바인딩은 레이아웃의 Handlebars로
+6. 스크립트는 데이터 변환/이벤트 위주`
 
 export async function POST(request: NextRequest) {
   try {
@@ -303,7 +326,7 @@ export async function POST(request: NextRequest) {
     
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'API 키가 설정되지 않았습니다. Vercel 환경변수를 확인해주세요.' },
+        { error: 'API 키가 설정되지 않았습니다.' },
         { status: 500 }
       )
     }
@@ -314,30 +337,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '설명을 입력해주세요' }, { status: 400 })
     }
 
-    const widgetTypeDesc = WIDGET_TYPES[widgetType] || '위젯'
     const columnsInfo = columns ? `\n사용할 데이터 컬럼: ${columns}` : ''
-    const optionsInfo = options ? `\n추가 옵션: ${JSON.stringify(options)}` : ''
+    const optionsInfo = options ? `\n옵션: ${JSON.stringify(options)}` : ''
 
-    // 레퍼런스 코드 로드 (선택적)
-    let referenceCode = ''
-    try {
-      referenceCode = await loadReferenceCode()
-    } catch {
-      // 레퍼런스 로드 실패해도 계속 진행
-    }
+    const userPrompt = `${description}${columnsInfo}${optionsInfo}
 
-    const userPrompt = `${widgetTypeDesc}를 만들어주세요.
-
-요구사항:
-${description}${columnsInfo}${optionsInfo}
-
-${referenceCode ? `\n참고할 실제 BIX5 코드 예제:${referenceCode.slice(0, 5000)}` : ''}
-
-BIX5 위젯 코드를 생성해주세요.`
+위 요구사항에 맞는 BIX5 코드를 생성해주세요.
+반드시 "# 레이아웃", "# 스크립트", "# 컴포넌트 옵션" 3가지 섹션으로 출력하세요.`
 
     let code = ''
 
-    // Anthropic API 우선 사용
     if (process.env.ANTHROPIC_API_KEY) {
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -346,13 +355,12 @@ BIX5 위젯 코드를 생성해주세요.`
         model: 'claude-sonnet-4-20250514',
         max_tokens: 4000,
         messages: [
-          { role: 'user', content: SYSTEM_PROMPT + '\n\n' + userPrompt }
+          { role: 'user', content: SYSTEM_PROMPT + '\n\n---\n\n' + userPrompt }
         ],
       })
 
       code = message.content[0].type === 'text' ? message.content[0].text : ''
     } else {
-      // OpenAI fallback
       const OpenAI = (await import('openai')).default
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -369,8 +377,8 @@ BIX5 위젯 코드를 생성해주세요.`
       code = completion.choices[0]?.message?.content || ''
     }
     
-    // Remove markdown code blocks if present
-    code = code.replace(/```(?:xml|html|css|javascript)?\n?/g, '').replace(/```\n?/g, '').trim()
+    // Remove markdown code blocks
+    code = code.replace(/```(?:xml|html|css|javascript|json)?\n?/g, '').replace(/```\n?/g, '').trim()
 
     return NextResponse.json({ code })
   } catch (error) {
